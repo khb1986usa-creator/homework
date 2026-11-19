@@ -381,12 +381,29 @@
           }
         );
 
+        // 관리자 비밀번호(PIN) 파이어스토어 실시간 동기화
+        const adminPinDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'adminPin');
+        const unsubAdminPin = onSnapshot(
+          adminPinDocRef,
+          (docSnap) => {
+            if (docSnap.exists() && docSnap.data().pin) {
+              setCurrentAdminPin(String(docSnap.data().pin));
+            } else {
+              setCurrentAdminPin('1234');
+            }
+          },
+          (error) => {
+            console.error('Admin PIN fetch error:', error);
+          }
+        );
+
         return () => {
           unsubStudents();
           unsubHomeworks();
           unsubSubmissions();
           unsubClasses();
           unsubSettings();
+          unsubAdminPin();
         };
       }, [firebaseUser, db]);
 
@@ -749,8 +766,12 @@
         }
       };
 
-      const handleChangeAdminPin = (e) => {
+      const handleChangeAdminPin = async (e) => {
         e.preventDefault();
+        if (!firebaseUser) {
+          showToast('서버 연결 상태를 확인해 주세요.', 'error');
+          return;
+        }
         if (oldPinInput !== currentAdminPin) {
           showToast('현재 비밀번호가 일치하지 않습니다.', 'error');
           return;
@@ -764,11 +785,21 @@
           return;
         }
 
-        setCurrentAdminPin(newPinInput);
-        setOldPinInput('');
-        setNewPinInput('');
-        setConfirmPinInput('');
-        showToast('관리자 비밀번호가 성공적으로 변경되었습니다! 🔑');
+        try {
+          const adminPinDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'adminPin');
+          await setDoc(adminPinDocRef, {
+            pin: newPinInput,
+            updatedAt: serverTimestamp(),
+          });
+          setCurrentAdminPin(newPinInput);
+          setOldPinInput('');
+          setNewPinInput('');
+          setConfirmPinInput('');
+          showToast('관리자 비밀번호가 저장되었습니다! (모든 기기 및 새로고침에 반영됨) 🔑');
+        } catch (err) {
+          console.error('PIN save error:', err);
+          showToast('비밀번호 저장 중 오류가 발생했습니다.', 'error');
+        }
       };
 
       const changeDate = (offset) => {
