@@ -433,8 +433,9 @@
         const netMap = {};
         students.forEach((st) => {
           const earned = earnedMap[st.id] || 0;
+          const bonus = typeof st.bonusPoints === 'number' ? st.bonusPoints : 0;
           const spent = typeof st.spentPoints === 'number' ? st.spentPoints : 0;
-          netMap[st.id] = earned - spent;
+          netMap[st.id] = earned + bonus - spent;
         });
         return netMap;
       }, [students, submissions]);
@@ -939,17 +940,38 @@
         }
       };
 
+      // Grant +1 arbitrary teacher bonus point to a student
+      const handleGiveBonusPoint = async (student, delta = 1) => {
+        if (!firebaseUser || !student) return;
+        const currentBonus = typeof student.bonusPoints === 'number' ? student.bonusPoints : 0;
+        const nextBonus = currentBonus + delta;
+
+        try {
+          await setDoc(
+            doc(db, 'artifacts', appId, 'public', 'data', 'students', student.id),
+            { bonusPoints: nextBonus },
+            { merge: true }
+          );
+          if (currentStudent?.id === student.id) {
+            setCurrentStudent((prev) => (prev ? { ...prev, bonusPoints: nextBonus } : prev));
+          }
+          showToast(`${student.name} 학생에게 ${delta > 0 ? `+${delta}P` : `${delta}P`} 포인트를 지급했습니다!`);
+        } catch (err) {
+          showToast('포인트 지급 중 오류가 발생했습니다.', 'error');
+        }
+      };
+
       // Reset a student's points and clear their homework submission records together
       const handleResetStudentPoints = (student) => {
         if (!firebaseUser || !student) return;
         setConfirmModal({
-          title: '포인트 및 숙제 기록 초기화',
-          message: `${student.name} 학생의 포인트를 0P로 초기화하고, 체크된 숙제 완료 기록도 함께 초기화하시겠습니까?`,
+          title: '⚠️ 숙제 초기화 경고',
+          message: `주의! '${student.name}' 학생의 숙제를 초기화하면 누적된 포인트(0P)와 체크된 숙제 완료 기록까지 동시에 모두 초기화됩니다. 계속하시겠습니까?`,
           onConfirm: async () => {
             try {
               await setDoc(
                 doc(db, 'artifacts', appId, 'public', 'data', 'students', student.id),
-                { spentPoints: 0 },
+                { spentPoints: 0, bonusPoints: 0 },
                 { merge: true }
               );
 
@@ -961,7 +983,7 @@
               );
 
               if (currentStudent?.id === student.id) {
-                setCurrentStudent((prev) => (prev ? { ...prev, spentPoints: 0 } : prev));
+                setCurrentStudent((prev) => (prev ? { ...prev, spentPoints: 0, bonusPoints: 0 } : prev));
               }
               showToast(`${student.name} 학생의 포인트와 숙제 기록이 초기화되었습니다.`);
             } catch (err) {
@@ -1092,7 +1114,7 @@
       if (authLoading || dataLoading) {
         return (
           <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-            <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+            <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4" />
             <p className="text-slate-600 font-medium">숙제 데이터를 불러오는 중...</p>
           </div>
         );
@@ -1102,7 +1124,11 @@
         return (
           <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-blue-50 flex items-center justify-center p-4">
             {toastMsg && (
-              <div className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-xl shadow-lg text-white font-medium ${toastMsg.type === 'error' ? 'bg-rose-600' : 'bg-emerald-600'}`}>
+              <div
+                className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-xl shadow-lg text-white font-medium ${
+                  toastMsg.type === 'error' ? 'bg-rose-600' : 'bg-emerald-600'
+                }`}
+              >
                 {toastMsg.message}
               </div>
             )}
@@ -1127,15 +1153,29 @@
               <div className="grid grid-cols-2 border-b border-slate-100 bg-slate-50/50">
                 <button
                   type="button"
-                  onClick={() => { setLoginTab('student'); setLoginError(''); }}
-                  className={`py-4 text-sm font-semibold flex items-center justify-center gap-2 border-b-2 ${loginTab === 'student' ? 'border-indigo-600 text-indigo-600 bg-white' : 'border-transparent text-slate-500'}`}
+                  onClick={() => {
+                    setLoginTab('student');
+                    setLoginError('');
+                  }}
+                  className={`py-4 text-sm font-semibold flex items-center justify-center gap-2 border-b-2 ${
+                    loginTab === 'student'
+                      ? 'border-indigo-600 text-indigo-600 bg-white'
+                      : 'border-transparent text-slate-500'
+                  }`}
                 >
                   <Icon name="userCheck" className="w-4 h-4" /> 학생 로그인
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setLoginTab('teacher'); setLoginError(''); }}
-                  className={`py-4 text-sm font-semibold flex items-center justify-center gap-2 border-b-2 ${loginTab === 'teacher' ? 'border-indigo-600 text-indigo-600 bg-white' : 'border-transparent text-slate-500'}`}
+                  onClick={() => {
+                    setLoginTab('teacher');
+                    setLoginError('');
+                  }}
+                  className={`py-4 text-sm font-semibold flex items-center justify-center gap-2 border-b-2 ${
+                    loginTab === 'teacher'
+                      ? 'border-indigo-600 text-indigo-600 bg-white'
+                      : 'border-transparent text-slate-500'
+                  }`}
                 >
                   <Icon name="shield" className="w-4 h-4" /> 교사 관리자
                 </button>
@@ -1214,7 +1254,11 @@
         return (
           <div className="min-h-screen bg-slate-50 text-slate-800 pb-12">
             {toastMsg && (
-              <div className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-xl shadow-lg text-white font-medium ${toastMsg.type === 'error' ? 'bg-rose-600' : 'bg-emerald-600'}`}>
+              <div
+                className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-xl shadow-lg text-white font-medium ${
+                  toastMsg.type === 'error' ? 'bg-rose-600' : 'bg-emerald-600'
+                }`}
+              >
                 {toastMsg.message}
               </div>
             )}
@@ -1239,12 +1283,7 @@
                       <div className="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                         <Icon name="upload" className="w-4 h-4 text-white" />
                       </div>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleUploadStudentAvatar}
-                        className="hidden"
-                      />
+                      <input type="file" accept="image/*" onChange={handleUploadStudentAvatar} className="hidden" />
                     </label>
                     {activeStudent.photoDataUrl && (
                       <button
@@ -1264,6 +1303,7 @@
                     </span>
                   </div>
                 </div>
+
                 <div className="flex items-center gap-2">
                   <div
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border font-extrabold text-sm ${
@@ -1286,13 +1326,6 @@
                     type="button"
                     onClick={handleBuyDrawTicket}
                     disabled={!canBuyTicket}
-                    title={
-                      myTotalPoints < 0
-                        ? '마이너스 점수일 때는 구매할 수 없습니다'
-                        : myTotalPoints < 20
-                        ? '20포인트부터 뽑기권을 구매할 수 있습니다'
-                        : '20포인트를 사용하여 뽑기권 1장 구매'
-                    }
                     className={`px-3 py-1.5 rounded-xl text-xs sm:text-sm font-extrabold transition-all shrink-0 ${
                       canBuyTicket
                         ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs cursor-pointer'
@@ -1302,6 +1335,7 @@
                     뽑기권 (20P)
                   </button>
                   <button
+                    type="button"
                     onClick={handleLogout}
                     className="flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-rose-600 px-3 py-2 rounded-lg"
                   >
@@ -1313,7 +1347,11 @@
 
             <main className="max-w-3xl mx-auto px-4 pt-6 space-y-6">
               <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between">
-                <button onClick={() => changeDate(-1)} className="p-2.5 rounded-xl hover:bg-slate-100 text-slate-600">
+                <button
+                  type="button"
+                  onClick={() => changeDate(-1)}
+                  className="p-2.5 rounded-xl hover:bg-slate-100 text-slate-600"
+                >
                   <Icon name="chevronLeft" className="w-5 h-5" />
                 </button>
                 <div className="text-center">
@@ -1325,7 +1363,11 @@
                     </span>
                   </div>
                 </div>
-                <button onClick={() => changeDate(1)} className="p-2.5 rounded-xl hover:bg-slate-100 text-slate-600">
+                <button
+                  type="button"
+                  onClick={() => changeDate(1)}
+                  className="p-2.5 rounded-xl hover:bg-slate-100 text-slate-600"
+                >
                   <Icon name="chevronRight" className="w-5 h-5" />
                 </button>
               </div>
@@ -1354,18 +1396,29 @@
                   return (
                     <button
                       key={hw.id}
+                      type="button"
                       onClick={() => handleToggleSubmission(activeStudent.id, hw.id)}
                       className={`w-full text-left p-5 rounded-2xl border transition-all flex items-center justify-between ${
                         isDone ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-200 hover:border-indigo-300'
                       }`}
                     >
                       <div className="flex items-center gap-4">
-                        {isDone ? <Icon name="checkCircle" className="w-8 h-8 text-emerald-600" /> : <Icon name="circle" className="w-8 h-8 text-slate-300" />}
+                        {isDone ? (
+                          <Icon name="checkCircle" className="w-8 h-8 text-emerald-600" />
+                        ) : (
+                          <Icon name="circle" className="w-8 h-8 text-slate-300" />
+                        )}
                         <div>
-                          <h4 className={`text-lg font-bold ${isDone ? 'text-emerald-900 line-through' : 'text-slate-900'}`}>{hw.title}</h4>
+                          <h4 className={`text-lg font-bold ${isDone ? 'text-emerald-900 line-through' : 'text-slate-900'}`}>
+                            {hw.title}
+                          </h4>
                         </div>
                       </div>
-                      <span className={`px-3.5 py-1.5 rounded-xl text-sm font-bold ${isDone ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                      <span
+                        className={`px-3.5 py-1.5 rounded-xl text-sm font-bold ${
+                          isDone ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
+                        }`}
+                      >
                         {isDone ? '완료 (+1P)' : '미완료'}
                       </span>
                     </button>
@@ -1380,7 +1433,11 @@
       return (
         <div className="min-h-screen bg-slate-50 text-slate-800 pb-16">
           {toastMsg && (
-            <div className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-xl shadow-lg text-white font-medium ${toastMsg.type === 'error' ? 'bg-rose-600' : 'bg-emerald-600'}`}>
+            <div
+              className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-xl shadow-lg text-white font-medium ${
+                toastMsg.type === 'error' ? 'bg-rose-600' : 'bg-emerald-600'
+              }`}
+            >
               {toastMsg.message}
             </div>
           )}
@@ -1391,8 +1448,20 @@
                 <h3 className="text-lg font-bold text-slate-900">{confirmModal.title}</h3>
                 <p className="text-sm text-slate-600">{confirmModal.message}</p>
                 <div className="flex justify-end gap-2">
-                  <button onClick={() => setConfirmModal(null)} className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600">취소</button>
-                  <button onClick={confirmModal.onConfirm} className="px-4 py-2 rounded-xl text-sm font-semibold bg-rose-600 text-white">확인</button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmModal(null)}
+                    className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600"
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="button"
+                    onClick={confirmModal.onConfirm}
+                    className="px-4 py-2 rounded-xl text-sm font-semibold bg-rose-600 text-white"
+                  >
+                    확인
+                  </button>
                 </div>
               </div>
             </div>
@@ -1446,19 +1515,41 @@
                   <span className="text-xs text-indigo-600 font-semibold">교사 관리자 모드</span>
                 </div>
               </div>
-              <button onClick={handleLogout} className="flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-rose-600 px-3 py-2 rounded-lg">
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-rose-600 px-3 py-2 rounded-lg"
+              >
                 <Icon name="logOut" className="w-4 h-4" /> 로그아웃
               </button>
             </div>
 
             <div className="max-w-6xl mx-auto px-4 flex gap-2 overflow-x-auto">
-              <button onClick={() => setActiveTab('check')} className={`px-4 py-3 text-sm font-bold border-b-2 flex items-center gap-2 ${activeTab === 'check' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500'}`}>
+              <button
+                type="button"
+                onClick={() => setActiveTab('check')}
+                className={`px-4 py-3 text-sm font-bold border-b-2 flex items-center gap-2 ${
+                  activeTab === 'check' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500'
+                }`}
+              >
                 <Icon name="checkCircle" className="w-4 h-4" /> 일일 숙제 체크
               </button>
-              <button onClick={() => setActiveTab('dashboard')} className={`px-4 py-3 text-sm font-bold border-b-2 flex items-center gap-2 ${activeTab === 'dashboard' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500'}`}>
+              <button
+                type="button"
+                onClick={() => setActiveTab('dashboard')}
+                className={`px-4 py-3 text-sm font-bold border-b-2 flex items-center gap-2 ${
+                  activeTab === 'dashboard' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500'
+                }`}
+              >
                 <Icon name="dashboard" className="w-4 h-4" /> 통계 대시보드
               </button>
-              <button onClick={() => setActiveTab('manage')} className={`px-4 py-3 text-sm font-bold border-b-2 flex items-center gap-2 ${activeTab === 'manage' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500'}`}>
+              <button
+                type="button"
+                onClick={() => setActiveTab('manage')}
+                className={`px-4 py-3 text-sm font-bold border-b-2 flex items-center gap-2 ${
+                  activeTab === 'manage' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500'
+                }`}
+              >
                 <Icon name="users" className="w-4 h-4" /> 학생 · 요일별 숙제 관리
               </button>
             </div>
@@ -1471,8 +1562,11 @@
                   {['day', 'week', 'month'].map((item) => (
                     <button
                       key={item}
+                      type="button"
                       onClick={() => setViewPeriod(item)}
-                      className={`px-4 py-1.5 rounded-lg text-xs font-bold ${viewPeriod === item ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-500'}`}
+                      className={`px-4 py-1.5 rounded-lg text-xs font-bold ${
+                        viewPeriod === item ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-500'
+                      }`}
                     >
                       {item === 'day' ? '일간' : item === 'week' ? '주간' : '월간'}
                     </button>
@@ -1480,14 +1574,34 @@
                 </div>
 
                 <div className="flex items-center gap-3">
-                  <button onClick={() => changeDate(-1)} className="p-2 rounded-xl border border-slate-200"><Icon name="chevronLeft" className="w-5 h-5" /></button>
+                  <button
+                    type="button"
+                    onClick={() => changeDate(-1)}
+                    className="p-2 rounded-xl border border-slate-200"
+                  >
+                    <Icon name="chevronLeft" className="w-5 h-5" />
+                  </button>
                   <div className="flex items-center gap-2">
                     <Icon name="calendar" className="w-5 h-5 text-indigo-600" />
                     <span className="font-bold text-slate-900">{periodInfo.label}</span>
-                    <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-indigo-50 text-indigo-700">{periodInfo.subBadge}</span>
+                    <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-indigo-50 text-indigo-700">
+                      {periodInfo.subBadge}
+                    </span>
                   </div>
-                  <button onClick={() => changeDate(1)} className="p-2 rounded-xl border border-slate-200"><Icon name="chevronRight" className="w-5 h-5" /></button>
-                  <button onClick={() => setSelectedDate(new Date())} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100">오늘</button>
+                  <button
+                    type="button"
+                    onClick={() => changeDate(1)}
+                    className="p-2 rounded-xl border border-slate-200"
+                  >
+                    <Icon name="chevronRight" className="w-5 h-5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDate(new Date())}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100"
+                  >
+                    오늘
+                  </button>
                 </div>
                 <div className="text-sm text-slate-500">
                   전체 제출률: <strong className="text-indigo-600">{dashboardStats.overallRate}%</strong>
@@ -1502,8 +1616,13 @@
                     {availableClasses.map((cls) => (
                       <button
                         key={cls}
+                        type="button"
                         onClick={() => setClassFilter(cls)}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-bold ${classFilter === cls ? 'bg-slate-900 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold ${
+                          classFilter === cls
+                            ? 'bg-slate-900 text-white'
+                            : 'bg-white border border-slate-200 text-slate-600'
+                        }`}
                       >
                         {cls === 'ALL' ? '전체 반' : cls}
                       </button>
@@ -1518,196 +1637,213 @@
                   />
                 </div>
 
-                <div className="bg-white rounded-2xl border border-slate-200 overflow-x-auto shadow-xs">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200">
-                        <th className="py-3 px-4 text-xs font-bold text-slate-500 sticky left-0 bg-slate-50 z-10 min-w-[140px]">학생</th>
-                        {viewPeriod === 'day' && (
-                          <th className="py-3 px-4 text-xs font-bold text-slate-500">{periodInfo.label} 숙제 체크</th>
-                        )}
-                        {viewPeriod === 'week' &&
-                          periodInfo.dates.map((d) => {
-                            const dStr = formatDate(d);
-                            const dayObj = DAYS_OF_WEEK.find((item) => item.id === d.getDay());
-                            const isSelected = dStr === formattedSelectedDate;
-                            return (
-                              <th
-                                key={dStr}
-                                className={`py-3 px-2.5 text-center text-xs font-bold min-w-[115px] ${
-                                  isSelected ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500'
-                                }`}
-                              >
-                                <div>{dayObj?.label} ({d.getMonth() + 1}/{d.getDate()})</div>
-                              </th>
-                            );
-                          })}
-                        {viewPeriod === 'month' &&
-                          periodInfo.dates.map((d) => {
-                            const dStr = formatDate(d);
-                            const dayObj = DAYS_OF_WEEK.find((item) => item.id === d.getDay());
-                            const isWeekend = d.getDay() === 0 || d.getDay() === 6;
-                            return (
-                              <th
-                                key={dStr}
-                                className={`py-2.5 px-1.5 text-center text-[11px] font-bold min-w-[44px] ${
-                                  isWeekend ? 'text-rose-500 bg-rose-50/30' : 'text-slate-500'
-                                }`}
-                              >
-                                <div>{d.getDate()}</div>
-                                <div className="text-[10px] font-medium opacity-75">{dayObj?.label}</div>
-                              </th>
-                            );
-                          })}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {filteredStudents.map((st) => {
-                        return (
-                          <tr key={st.id} className="hover:bg-slate-50/70">
-                            <td className="py-3.5 px-4 sticky left-0 bg-white z-10 border-r border-slate-100">
-                              <div className="font-bold text-slate-900">{st.name}</div>
-                              <div className="text-xs text-slate-400">{st.className} · {st.id}</div>
-                            </td>
+                {filteredStudents.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400 text-sm">
+                    표시할 학생이 없습니다.
+                  </div>
+                ) : (
+                  <div className="bg-white rounded-2xl border border-slate-200 overflow-x-auto shadow-xs">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200">
+                          <th className="py-3 px-4 text-xs font-bold text-slate-500 sticky left-0 bg-slate-50 z-10 min-w-[140px]">
+                            학생
+                          </th>
+                          {viewPeriod === 'day' && (
+                            <th className="py-3 px-4 text-xs font-bold text-slate-500">
+                              {periodInfo.label} 숙제 체크
+                            </th>
+                          )}
+                          {viewPeriod === 'week' &&
+                            periodInfo.dates.map((d) => {
+                              const dStr = formatDate(d);
+                              const dayObj = DAYS_OF_WEEK.find((item) => item.id === d.getDay());
+                              const isSelected = dStr === formattedSelectedDate;
+                              return (
+                                <th
+                                  key={dStr}
+                                  className={`py-3 px-2.5 text-center text-xs font-bold min-w-[115px] ${
+                                    isSelected ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500'
+                                  }`}
+                                >
+                                  <div>{dayObj?.label} ({d.getMonth() + 1}/{d.getDate()})</div>
+                                </th>
+                              );
+                            })}
+                          {viewPeriod === 'month' &&
+                            periodInfo.dates.map((d) => {
+                              const dStr = formatDate(d);
+                              const dayObj = DAYS_OF_WEEK.find((item) => item.id === d.getDay());
+                              const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+                              return (
+                                <th
+                                  key={dStr}
+                                  className={`py-2.5 px-1.5 text-center text-[11px] font-bold min-w-[44px] ${
+                                    isWeekend ? 'text-rose-500 bg-rose-50/30' : 'text-slate-500'
+                                  }`}
+                                >
+                                  <div>{d.getDate()}</div>
+                                  <div className="text-[10px] font-medium opacity-75">{dayObj?.label}</div>
+                                </th>
+                              );
+                            })}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredStudents.map((st) => {
+                          const studentClass = st.className || '1반';
 
-                            {viewPeriod === 'day' && (
-                              <td className="py-3.5 px-4">
-                                {(() => {
-                                  const dayHws = activeHomeworksForDate.filter(
-                                    (hw) => !hw.className || hw.className === '전체' || hw.className === st.className
-                                  );
-                                  return (
-                                    <div className="flex flex-wrap gap-2">
-                                      {dayHws.map((hw) => {
-                                        const isDone = !!submissionMap[`${formattedSelectedDate}_${st.id}_${hw.id}`];
-                                        return (
-                                          <button
-                                            key={hw.id}
-                                            type="button"
-                                            onClick={() => handleToggleSubmission(st.id, hw.id, formattedSelectedDate)}
-                                            className={`px-3 py-1.5 rounded-xl text-xs font-bold border ${
-                                              isDone
-                                                ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                                                : 'bg-white border-slate-200 text-slate-600'
-                                            }`}
-                                          >
-                                            {isDone ? '✓ ' : ''}
-                                            {hw.title}
-                                          </button>
-                                        );
-                                      })}
-                                    </div>
-                                  );
-                                })()}
+                          return (
+                            <tr key={st.id} className="hover:bg-slate-50/70">
+                              <td className="py-3.5 px-4 sticky left-0 bg-white z-10 border-r border-slate-100">
+                                <div className="font-bold text-slate-900">{st.name}</div>
+                                <div className="text-xs text-slate-400">
+                                  {studentClass} · {st.id}
+                                </div>
                               </td>
-                            )}
 
-                            {viewPeriod === 'week' &&
-                              periodInfo.dates.map((d) => {
-                                const dStr = formatDate(d);
-                                const dayHws = homeworks
-                                  .filter((hw) => isHomeworkActiveOnDate(hw, d))
-                                  .filter((hw) => !hw.className || hw.className === '전체' || hw.className === st.className);
-
-                                return (
-                                  <td key={dStr} className="py-2.5 px-2 align-top border-l border-slate-100">
-                                    {dayHws.length === 0 ? (
-                                      <div className="text-center text-[11px] text-slate-300 py-2">-</div>
-                                    ) : (
-                                      <div className="flex flex-col gap-1">
+                              {viewPeriod === 'day' && (
+                                <td className="py-3.5 px-4">
+                                  {(() => {
+                                    const dayHws = activeHomeworksForDate.filter(
+                                      (hw) => !hw.className || hw.className === '전체' || hw.className === studentClass
+                                    );
+                                    if (dayHws.length === 0) {
+                                      return <span className="text-xs text-slate-400">배정된 숙제 없음</span>;
+                                    }
+                                    return (
+                                      <div className="flex flex-wrap gap-2">
                                         {dayHws.map((hw) => {
-                                          const isDone = !!submissionMap[`${dStr}_${st.id}_${hw.id}`];
+                                          const isDone = !!submissionMap[`${formattedSelectedDate}_${st.id}_${hw.id}`];
                                           return (
                                             <button
                                               key={hw.id}
                                               type="button"
-                                              onClick={() => handleToggleSubmission(st.id, hw.id, dStr)}
-                                              title={`${dStr} · ${hw.title}`}
-                                              className={`w-full text-left px-2 py-1 rounded-lg text-[11px] font-bold border truncate transition-all ${
+                                              onClick={() => handleToggleSubmission(st.id, hw.id, formattedSelectedDate)}
+                                              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
                                                 isDone
                                                   ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
                                                   : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'
                                               }`}
                                             >
-                                              {isDone ? '✓ ' : '○ '}
+                                              {isDone ? '✓ ' : ''}
                                               {hw.title}
                                             </button>
                                           );
                                         })}
                                       </div>
-                                    )}
-                                  </td>
-                                );
-                              })}
+                                    );
+                                  })()}
+                                </td>
+                              )}
 
-                            {viewPeriod === 'month' &&
-                              periodInfo.dates.map((d) => {
-                                const dStr = formatDate(d);
-                                const dayHws = homeworks
-                                  .filter((hw) => isHomeworkActiveOnDate(hw, d))
-                                  .filter((hw) => !hw.className || hw.className === '전체' || hw.className === st.className);
-                                const bonusSub = submissions.find((s) => s.id === `${dStr}_${st.id}_BONUS_${dStr}`);
-                                const bonusPoints = typeof bonusSub?.points === 'number' ? bonusSub.points : 0;
+                              {viewPeriod === 'week' &&
+                                periodInfo.dates.map((d) => {
+                                  const dStr = formatDate(d);
+                                  const dayHws = homeworks
+                                    .filter((hw) => isHomeworkActiveOnDate(hw, d))
+                                    .filter((hw) => !hw.className || hw.className === '전체' || hw.className === studentClass);
 
-                                return (
-                                  <td
-                                    key={dStr}
-                                    className="py-2 px-1.5 min-w-[96px] align-top border-l border-slate-100"
-                                  >
-                                    {dayHws.length === 0 ? (
-                                      <button
-                                        type="button"
-                                        onClick={() => handleAdjustMonthCellScore(st, dStr, dayHws)}
-                                        title={`${dStr} · 클릭하여 추가 점수(+1P) 토글`}
-                                        className={`w-full text-center px-1.5 py-1 rounded-lg text-[10px] font-extrabold transition-colors ${
-                                          bonusPoints > 0
-                                            ? 'bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100'
-                                            : 'text-slate-300 hover:bg-slate-50 hover:text-indigo-500'
-                                        }`}
-                                      >
-                                        {bonusPoints > 0 ? `+${bonusPoints}P` : '-'}
-                                      </button>
-                                    ) : (
-                                      <div className="flex flex-col gap-1">
-                                        {dayHws.map((hw) => {
-                                          const isDone = !!submissionMap[`${dStr}_${st.id}_${hw.id}`];
-                                          return (
-                                            <button
-                                              key={hw.id}
-                                              type="button"
-                                              onClick={() => handleToggleSubmission(st.id, hw.id, dStr)}
-                                              title={`${dStr} · ${hw.title}`}
-                                              className={`w-full text-left px-1.5 py-1 rounded-lg text-[10px] font-bold border truncate transition-all ${
-                                                isDone
-                                                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                                                  : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'
-                                              }`}
-                                            >
-                                              {isDone ? '✓ ' : '○ '}
-                                              {hw.title}
-                                            </button>
-                                          );
-                                        })}
-                                        {bonusPoints > 0 && (
+                                  return (
+                                    <td key={dStr} className="py-2.5 px-2 align-top border-l border-slate-100">
+                                      {dayHws.length === 0 ? (
+                                        <div className="text-center text-[11px] text-slate-300 py-2">-</div>
+                                      ) : (
+                                        <div className="flex flex-col gap-1">
+                                          {dayHws.map((hw) => {
+                                            const isDone = !!submissionMap[`${dStr}_${st.id}_${hw.id}`];
+                                            return (
+                                              <button
+                                                key={hw.id}
+                                                type="button"
+                                                onClick={() => handleToggleSubmission(st.id, hw.id, dStr)}
+                                                title={`${dStr} · ${hw.title}`}
+                                                className={`w-full text-left px-2 py-1 rounded-lg text-[11px] font-bold border truncate transition-all ${
+                                                  isDone
+                                                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                                                    : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'
+                                                }`}
+                                              >
+                                                {isDone ? '✓ ' : '○ '}
+                                                {hw.title}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </td>
+                                  );
+                                })}
+
+                              {viewPeriod === 'month' &&
+                                periodInfo.dates.map((d) => {
+                                  const dStr = formatDate(d);
+                                  const dayHws = homeworks
+                                    .filter((hw) => isHomeworkActiveOnDate(hw, d))
+                                    .filter((hw) => !hw.className || hw.className === '전체' || hw.className === studentClass);
+                                  const bonusSub = submissions.find((s) => s.id === `${dStr}_${st.id}_BONUS_${dStr}`);
+                                  const bonusPoints = typeof bonusSub?.points === 'number' ? bonusSub.points : 0;
+
+                                  return (
+                                    <td
+                                      key={dStr}
+                                      className="py-2 px-1.5 min-w-[96px] align-top border-l border-slate-100"
+                                    >
+                                      {dayHws.length === 0 ? (
+                                        bonusPoints > 0 ? (
                                           <button
                                             type="button"
                                             onClick={() => handleAdjustMonthCellScore(st, dStr, dayHws)}
-                                            className="w-full text-center px-1.5 py-0.5 rounded-md text-[10px] font-extrabold bg-indigo-50 border border-indigo-200 text-indigo-700"
+                                            title={`${dStr} · 추가 점수 클릭하여 조정`}
+                                            className="w-full text-center px-1.5 py-1 rounded-lg text-[10px] font-extrabold bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 transition-colors"
                                           >
                                             +{bonusPoints}P
                                           </button>
-                                        )}
-                                      </div>
-                                    )}
-                                  </td>
-                                );
-                              })}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                                        ) : (
+                                          <div className="text-center text-[11px] text-slate-300 py-1.5">-</div>
+                                        )
+                                      ) : (
+                                        <div className="flex flex-col gap-1">
+                                          {dayHws.map((hw) => {
+                                            const isDone = !!submissionMap[`${dStr}_${st.id}_${hw.id}`];
+                                            return (
+                                              <button
+                                                key={hw.id}
+                                                type="button"
+                                                onClick={() => handleToggleSubmission(st.id, hw.id, dStr)}
+                                                title={`${dStr} · ${hw.title}`}
+                                                className={`w-full text-left px-1.5 py-1 rounded-lg text-[10px] font-bold border truncate transition-all ${
+                                                  isDone
+                                                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                                                    : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'
+                                                }`}
+                                              >
+                                                {isDone ? '✓ ' : '○ '}
+                                                {hw.title}
+                                              </button>
+                                            );
+                                          })}
+                                          {bonusPoints > 0 && (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleAdjustMonthCellScore(st, dStr, dayHws)}
+                                              className="w-full text-center px-1.5 py-0.5 rounded-md text-[10px] font-extrabold bg-indigo-50 border border-indigo-200 text-indigo-700"
+                                            >
+                                              +{bonusPoints}P
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+                                    </td>
+                                  );
+                                })}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1871,16 +2007,35 @@
                               </div>
 
                               <div className="flex items-center gap-2 shrink-0">
-                                <span className="text-xs font-extrabold text-amber-600">
-                                  {studentPointsMap[st.id] || 0} P
-                                </span>
+            <span className="text-xs font-extrabold text-amber-600">
+              {studentPointsMap[st.id] || 0} P
+            </span>
+            {/* Teacher arbitrary point adjustment (+1P / -1P) */}
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                                    onClick={() => handleGiveBonusPoint(st, 1)}
+                                    title="선생님 임의 포인트 +1P 지급"
+                                    className="px-2 py-1 rounded-lg text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors cursor-pointer"
+                                  >
+                                    +1P
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleGiveBonusPoint(st, -1)}
+                                    title="선생님 임의 포인트 -1P 차감"
+                                    className="px-2 py-1 rounded-lg text-[11px] font-bold bg-rose-500 hover:bg-rose-600 text-white transition-colors cursor-pointer"
+                                  >
+                                    -1P
+                                  </button>
+                                </div>
                                 <button
                                   type="button"
                                   onClick={() => handleResetStudentPoints(st)}
-                                  title="포인트 및 숙제 완료 기록 초기화"
-                                  className="px-2 py-1 rounded-lg text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 transition-colors"
+                                  title="포인트 및 숙제 완료 기록 동시 초기화"
+                                  className="px-2 py-1 rounded-lg text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 transition-colors cursor-pointer"
                                 >
-                                  초기화
+                                  숙제 초기화
                                 </button>
                                 <div className="flex items-center gap-1.5 bg-purple-50 border border-purple-200 px-2 py-1 rounded-lg">
                                   <span className="text-xs font-extrabold text-purple-700">🎟️ {tickets}장</span>
