@@ -1087,29 +1087,125 @@
 
         let totalExpected = 0;
         let totalCompleted = 0;
+        const periodBreakdown = [];
+        const homeworkTracker = {};
+        const studentMetrics = [];
+
+        filteredStudents.forEach((st) => {
+          studentMetrics.push({
+            student: st,
+            expected: 0,
+            completed: 0,
+            rate: 0,
+            points: studentPointsMap[st.id] || 0,
+            tickets: typeof st.drawTickets === 'number' ? st.drawTickets : 0,
+          });
+        });
+
+        const studentMetricIndex = {};
+        studentMetrics.forEach((item, idx) => {
+          studentMetricIndex[item.student.id] = idx;
+        });
 
         targetDates.forEach((d) => {
           const dStr = formatDate(d);
           const dayHws = homeworks.filter((hw) => isHomeworkActiveOnDate(hw, d));
+          const dayObj = DAYS_OF_WEEK.find((item) => item.id === d.getDay());
+
+          let dayExpected = 0;
+          let dayCompleted = 0;
 
           filteredStudents.forEach((st) => {
             const studentClass = st.className || '1반';
             const studentHws = dayHws.filter(
               (hw) => !hw.className || hw.className === '전체' || hw.className === studentClass
             );
+            dayExpected += studentHws.length;
             totalExpected += studentHws.length;
 
+            const mIdx = studentMetricIndex[st.id];
+            if (mIdx !== undefined) {
+              studentMetrics[mIdx].expected += studentHws.length;
+            }
+
             studentHws.forEach((hw) => {
-              if (submissionMap[`${dStr}_${st.id}_${hw.id}`]) {
+              const isDone = !!submissionMap[`${dStr}_${st.id}_${hw.id}`];
+              if (isDone) {
+                dayCompleted++;
                 totalCompleted++;
+                if (mIdx !== undefined) {
+                  studentMetrics[mIdx].completed += 1;
+                }
+              }
+
+              if (!homeworkTracker[hw.id]) {
+                homeworkTracker[hw.id] = {
+                  id: hw.id,
+                  title: hw.title,
+                  className: hw.className || '전체',
+                  expected: 0,
+                  completed: 0,
+                };
+              }
+              homeworkTracker[hw.id].expected += 1;
+              if (isDone) {
+                homeworkTracker[hw.id].completed += 1;
               }
             });
           });
+
+          periodBreakdown.push({
+            dateStr: dStr,
+            shortLabel:
+              viewPeriod === 'month'
+                ? `${d.getDate()}일`
+                : `${dayObj?.label || ''} (${d.getMonth() + 1}/${d.getDate()})`,
+            expected: dayExpected,
+            completed: dayCompleted,
+            rate: dayExpected > 0 ? Math.round((dayCompleted / dayExpected) * 100) : 0,
+          });
         });
 
+        studentMetrics.forEach((item) => {
+          item.rate = item.expected > 0 ? Math.round((item.completed / item.expected) * 100) : 100;
+          item.missing = Math.max(0, item.expected - item.completed);
+        });
+
+        const rankedStudents = [...studentMetrics].sort((a, b) => {
+          if (b.points !== a.points) return b.points - a.points;
+          if (b.rate !== a.rate) return b.rate - a.rate;
+          return a.student.name.localeCompare(b.student.name, 'ko');
+        });
+
+        const attentionStudents = studentMetrics
+          .filter((item) => item.missing > 0)
+          .sort((a, b) => b.missing - a.missing || a.rate - b.rate);
+
+        const homeworkBreakdown = Object.values(homeworkTracker)
+          .map((hw) => ({
+            ...hw,
+            rate: hw.expected > 0 ? Math.round((hw.completed / hw.expected) * 100) : 0,
+          }))
+          .sort((a, b) => a.rate - b.rate || b.expected - a.expected);
+
         const overallRate = totalExpected > 0 ? Math.round((totalCompleted / totalExpected) * 100) : 0;
-        return { overallRate };
-      }, [filteredStudents, periodInfo, submissionMap, homeworks]);
+        const perfectStudentsCount = studentMetrics.filter(
+          (item) => item.expected > 0 && item.completed === item.expected
+        ).length;
+
+        return {
+          overallRate,
+          totalExpected,
+          totalCompleted,
+          periodBreakdown,
+          rankedStudents,
+          attentionStudents,
+          homeworkBreakdown,
+          perfectStudentsCount,
+        };
+      }, [filteredStudents, periodInfo, submissionMap, homeworks, studentPointsMap, viewPeriod]);
+
+      const [leaderboardMode, setLeaderboardMode] = useState('points');
 
       if (authLoading || dataLoading) {
         return (
@@ -1848,25 +1944,258 @@
             )}
 
             {activeTab === 'dashboard' && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-indigo-600 text-white rounded-2xl p-6 shadow-sm">
-                  <p className="text-indigo-100 text-xs font-semibold">기간 평균 제출률</p>
-                  <p className="text-3xl font-extrabold mt-2">{dashboardStats.overallRate}%</p>
-                  <p className="text-indigo-100 text-xs mt-1">{periodInfo.label} 기준</p>
+              <div className="space-y-6">
+                {/* Summary KPI Row */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-indigo-600 text-white rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+                    <div>
+                      <p className="text-indigo-100 text-xs font-semibold">기간 평균 제출률</p>
+                      <p className="text-3xl font-extrabold mt-2">{dashboardStats.overallRate}%</p>
+                    </div>
+                    <p className="text-indigo-100 text-xs mt-3">
+                      {periodInfo.label} · {dashboardStats.totalCompleted}/{dashboardStats.totalExpected}건 완료
+                    </p>
+                  </div>
+                  <div className="bg-amber-500 text-white rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+                    <div>
+                      <p className="text-amber-100 text-xs font-semibold">조회된 학생</p>
+                      <p className="text-3xl font-extrabold mt-2">{filteredStudents.length}명</p>
+                    </div>
+                    <p className="text-amber-100 text-xs mt-3">
+                      {classFilter === 'ALL' ? '전체 반 기준' : `${classFilter} 기준`} · 만점 달성 {dashboardStats.perfectStudentsCount}명
+                    </p>
+                  </div>
+                  <div className="bg-emerald-600 text-white rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+                    <div>
+                      <p className="text-emerald-100 text-xs font-semibold">순 포인트 합계</p>
+                      <p className="text-3xl font-extrabold mt-2">
+                        {filteredStudents.reduce((acc, st) => acc + (studentPointsMap[st.id] || 0), 0)} P
+                      </p>
+                    </div>
+                    <p className="text-emerald-100 text-xs mt-3">
+                      미제출 확인 필요 {dashboardStats.attentionStudents.length}명
+                    </p>
+                  </div>
                 </div>
-                <div className="bg-amber-500 text-white rounded-2xl p-6 shadow-sm">
-                  <p className="text-amber-100 text-xs font-semibold">조회된 학생</p>
-                  <p className="text-3xl font-extrabold mt-2">{filteredStudents.length}명</p>
-                  <p className="text-amber-100 text-xs mt-1">
-                    {classFilter === 'ALL' ? '전체 반 기준' : `${classFilter} 기준`}
-                  </p>
+
+                {/* Trend Chart + Missing Homework Alert Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  {/* Period Submission Trend Visualization */}
+                  <section className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div>
+                        <h3 className="text-base font-bold text-slate-900">기간별 숙제 제출 추이</h3>
+                        <p className="text-xs text-slate-500">
+                          {periodInfo.label} 기준 날짜별 완료율 및 제출 건수
+                        </p>
+                      </div>
+                      <span className="px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-bold">
+                        {periodInfo.subBadge}
+                      </span>
+                    </div>
+
+                    {dashboardStats.periodBreakdown.length === 0 ? (
+                      <div className="py-12 text-center text-sm text-slate-400">
+                        표시할 기간 데이터가 없습니다.
+                      </div>
+                    ) : (
+                      <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+                        {dashboardStats.periodBreakdown.map((pt) => (
+                          <div key={pt.dateStr} className="space-y-1">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="font-bold text-slate-700">{pt.shortLabel}</span>
+                              <span className="text-slate-500">
+                                {pt.expected > 0 ? (
+                                  <>
+                                    <strong className="text-indigo-600">{pt.rate}%</strong> ({pt.completed}/{pt.expected}건)
+                                  </>
+                                ) : (
+                                  '예정 숙제 없음'
+                                )}
+                              </span>
+                            </div>
+                            <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-300 ${
+                                  pt.rate >= 80
+                                    ? 'bg-emerald-500'
+                                    : pt.rate >= 50
+                                    ? 'bg-indigo-500'
+                                    : pt.expected > 0
+                                    ? 'bg-amber-400'
+                                    : 'bg-slate-200'
+                                }`}
+                                style={{ width: `${pt.expected > 0 ? pt.rate : 0}%` }}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                  {/* Incomplete / Attention Students Panel */}
+                  <section className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-base font-bold text-slate-900">미제출 확인 학생</h3>
+                        <p className="text-xs text-slate-500">선택 기간 내 미완료 과제가 남은 학생</p>
+                      </div>
+                      <span className="px-2.5 py-1 rounded-full bg-rose-50 text-rose-600 text-xs font-extrabold">
+                        {dashboardStats.attentionStudents.length}명
+                      </span>
+                    </div>
+
+                    {dashboardStats.attentionStudents.length === 0 ? (
+                      <div className="py-12 text-center space-y-1.5">
+                        <p className="text-sm font-bold text-emerald-600">모든 숙제 제출 완료! 🎉</p>
+                        <p className="text-xs text-slate-400">확인할 미제출 학생이 없습니다.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+                        {dashboardStats.attentionStudents.map((item) => (
+                          <div
+                            key={item.student.id}
+                            className="p-3 rounded-xl bg-rose-50/60 border border-rose-100 flex items-center justify-between gap-2"
+                          >
+                            <div className="min-w-0">
+                              <div className="font-bold text-slate-900 text-sm truncate">
+                                {item.student.name}{' '}
+                                <span className="text-xs font-semibold text-slate-500">
+                                  ({item.student.className || '1반'})
+                                </span>
+                              </div>
+                              <div className="text-xs text-slate-500">
+                                완료 {item.completed}/{item.expected}건 ({item.rate}%)
+                              </div>
+                            </div>
+                            <span className="px-2.5 py-1 rounded-lg bg-rose-600 text-white text-xs font-extrabold shrink-0">
+                              미완료 {item.missing}건
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
                 </div>
-                <div className="bg-emerald-600 text-white rounded-2xl p-6 shadow-sm">
-                  <p className="text-emerald-100 text-xs font-semibold">순 포인트 합계</p>
-                  <p className="text-3xl font-extrabold mt-2">
-                    {filteredStudents.reduce((acc, st) => acc + (studentPointsMap[st.id] || 0), 0)} P
-                  </p>
-                  <p className="text-emerald-100 text-xs mt-1">조회된 학생 합산</p>
+
+                {/* Student Leaderboard + Homework Completion Breakdown Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Student Ranking / Leaderboard */}
+                  <section className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div>
+                        <h3 className="text-base font-bold text-slate-900">학생 포인트 · 달성 랭킹</h3>
+                        <p className="text-xs text-slate-500">우리 반 성취 현황과 보유 뽑기권</p>
+                      </div>
+                      <div className="flex items-center bg-slate-100 p-1 rounded-xl text-xs font-bold">
+                        <button
+                          type="button"
+                          onClick={() => setLeaderboardMode('points')}
+                          className={`px-3 py-1 rounded-lg transition-colors ${
+                            leaderboardMode === 'points' ? 'bg-white text-indigo-600 shadow-2xs' : 'text-slate-500'
+                          }`}
+                        >
+                          포인트순
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLeaderboardMode('rate')}
+                          className={`px-3 py-1 rounded-lg transition-colors ${
+                            leaderboardMode === 'rate' ? 'bg-white text-indigo-600 shadow-2xs' : 'text-slate-500'
+                          }`}
+                        >
+                          달성률순
+                        </button>
+                      </div>
+                    </div>
+
+                    {dashboardStats.rankedStudents.length === 0 ? (
+                      <div className="py-10 text-center text-sm text-slate-400">
+                        표시할 학생 데이터가 없습니다.
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto pr-1">
+                        {[...dashboardStats.rankedStudents]
+                          .sort((a, b) =>
+                            leaderboardMode === 'rate'
+                              ? b.rate - a.rate || b.points - a.points
+                              : b.points - a.points || b.rate - a.rate
+                          )
+                          .map((item, idx) => (
+                            <div key={item.student.id} className="py-3 flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <span
+                                  className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-extrabold shrink-0 ${
+                                    idx === 0
+                                      ? 'bg-amber-100 text-amber-700'
+                                      : idx === 1
+                                      ? 'bg-slate-200 text-slate-700'
+                                      : idx === 2
+                                      ? 'bg-orange-100 text-orange-700'
+                                      : 'bg-slate-100 text-slate-500'
+                                  }`}
+                                >
+                                  {idx + 1}
+                                </span>
+                                <div className="min-w-0">
+                                  <div className="font-bold text-slate-900 text-sm truncate">
+                                    {item.student.name}
+                                    <span className="ml-1.5 text-[11px] font-semibold text-indigo-600">
+                                      {item.student.className || '1반'}
+                                    </span>
+                                  </div>
+                                  <div className="text-xs text-slate-400">
+                                    숙제 {item.completed}/{item.expected}건 ({item.rate}%) · 🎟️ {item.tickets}장
+                                  </div>
+                                </div>
+                              </div>
+                              <span className="px-3 py-1 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs font-extrabold shrink-0">
+                                {item.points} P
+                              </span>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </section>
+
+                  {/* Homework Item Completion Breakdown */}
+                  <section className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900">과제별 완료율 분석</h3>
+                      <p className="text-xs text-slate-500">선택 기간 동안 배정된 숙제 항목별 달성률</p>
+                    </div>
+
+                    {dashboardStats.homeworkBreakdown.length === 0 ? (
+                      <div className="py-10 text-center text-sm text-slate-400">
+                        선택 기간에 배정된 숙제가 없습니다.
+                      </div>
+                    ) : (
+                      <div className="space-y-3.5 max-h-80 overflow-y-auto pr-1">
+                        {dashboardStats.homeworkBreakdown.map((hw) => (
+                          <div key={hw.id} className="p-3.5 rounded-xl bg-slate-50 border border-slate-100 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <span className="inline-block px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[10px] font-bold mr-1.5">
+                                  {hw.className}
+                                </span>
+                                <span className="font-bold text-slate-800 text-sm">{hw.title}</span>
+                              </div>
+                              <span className="text-xs font-extrabold text-indigo-600 shrink-0">
+                                {hw.rate}% ({hw.completed}/{hw.expected})
+                              </span>
+                            </div>
+                            <div className="w-full h-2.5 bg-slate-200/80 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-indigo-600 rounded-full transition-all duration-300"
+                                style={{ width: `${hw.rate}%` }}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
                 </div>
               </div>
             )}
